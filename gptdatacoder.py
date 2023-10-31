@@ -38,10 +38,19 @@ class GPTDataCoder:
     # This function is used internally to code a single item
     def _code_item(self, item):
         if self.mode == 'live':
-            completion = openai.ChatCompletion.create(
-                model = self.model, 
-                messages = self.base_messages + self.example_messages + [{'role': 'user', 'content': item }]
-            )
+            # If the request to OpenAI times out, this will keep making the same request until it doesn't time
+            # out. If the timeout value is unreasonably low, this can lead to an infinite loop.
+            while True:
+                try:
+                    completion = openai.ChatCompletion.create(
+                        model = self.model, 
+                        messages = self.base_messages 
+                            + self.example_messages 
+                            + [{'role': 'user', 'content': item }]
+                    )
+                    break
+                except openai.error.Timeout as e:
+                    print('Request timed out, retrying...')
         # This provides a way to test that your script runs properly without actually making a call to the
         # OpenAI API. It provides a random response along with a small delay.
         elif self.mode == 'simulated':
@@ -88,14 +97,18 @@ class GPTDataCoder:
     # is handled. If it is 'categorical', the most frequent response is returned (ties are
     # reported as 1). If it is 'probability', the responses are the proportion of runs where
     # the code was applied to that item. So if there were 3 runs and it was applied in 2 of
-    # those runs, that would be .67.
+    # those runs, that would be .67. <timeout> controls how long we wait (in seconds) for a 
+    # response from OpenAI before giving up and trying again. <mode> can be 'live' or
+    # 'simulated', and controls whether we send requests to OpenAI and get a real response,
+    # or just provide a simulated response (this can be useful for testing purposes).
     # 
     # Also creates two attributes on the coder's _data object:
     # <coding_data> - The raw responses from the model for each run, as a list of dataframes
     # <coding_matrix> - A 2D array with rows for each item and columns for each run, and 0 or 1
     # cell values indicating how the model coded that item on that run
-    def code(self, items, num_runs=1, coding_type='categorical', mode='live'):
+    def code(self, items, num_runs=1, coding_type='categorical', timeout=30, mode='live'):
         openai.api_key = self.api_key
+        openai.api_requestor.TIMEOUT_SECS = timeout
         self._data['coding_data'] = []
         self.mode = mode
         for run in range(0, num_runs):
